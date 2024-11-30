@@ -1,20 +1,15 @@
 // app/index.tsx
 import React, { useEffect, useCallback } from 'react';
-import { Text, View, Button, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Button, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
-import { Stack } from 'expo-router';
 import * as Network from 'expo-network';
+import { useRouter } from 'expo-router';
 
 SplashScreen.preventAutoHideAsync();
 
-// Set the animation options. This is optional.
-SplashScreen.setOptions({
-  duration: 1000,
-  fade: true,
-});
-
 export default function Index() {
   const [apiStatus, setApiStatus] = React.useState<'loading' | 'success' | 'error'>('loading');
+  const router = useRouter();
 
   const checkApiStatus = async () => {
     try {
@@ -30,10 +25,14 @@ export default function Index() {
       setApiStatus('loading');
       const response = await fetch('https://mixtapeapis.onrender.com/api');
       const text = await response.text();
+      console.log("waiting for api response");
       if (text === 'MixTape Api Running...') {
         setApiStatus('success');
+        console.log(text);
+        router.replace('/Home'); // Navigate to Home screen
       } else {
         setApiStatus('error');
+        console.error('Error no response from server..');
       }
     } catch (error) {
       console.error('Error pinging API:', error);
@@ -48,7 +47,9 @@ export default function Index() {
   }, []);
 
   const onLayoutRootView = useCallback(async () => {
-    // Any additional setup after layout
+    if (apiStatus !== 'loading') {
+      await SplashScreen.hideAsync();
+    }
   }, [apiStatus]);
 
   if (apiStatus === 'loading') {
@@ -63,9 +64,10 @@ export default function Index() {
     );
   }
 
+  // While navigating, keep the splash screen hidden
   return (
     <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
-      <Stack />
+      {/* The navigation is handled by the router */}
     </View>
   );
 }
