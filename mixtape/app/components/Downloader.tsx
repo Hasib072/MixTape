@@ -8,30 +8,25 @@ import {
   StyleSheet,
   Alert,
   Platform,
-  FlatList,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { PermissionStatus } from 'expo-media-library';
-import * as Sharing from 'expo-sharing';
+import { StorageAccessFramework } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DownloadItem from './DownloadItem';
-// Removed ProgressBar import
-// import { ProgressBar } from 'react-native-paper';
-import { ApiResponse, DownloadResumableDownloadResult } from '../types/types'; // Adjust the path as needed
+import { ApiResponse } from '../types/types'; // Adjust the path as needed
 
 const Downloader = () => {
   const [downloadLink, setDownloadLink] = useState<string>('');
   const [userFileName, setUserFileName] = useState<string>(''); // User-edited filename
-  const [downloadDirectory, setDownloadDirectory] = useState<string>('');
   const [downloadStatus, setDownloadStatus] = useState<string>('');
-  const [files, setFiles] = useState<string[]>([]);
   const [fetchedLink, setFetchedLink] = useState<string>(''); // Downloadable link from API
   const [title, setTitle] = useState<string>(''); // Title from API
   const [filesize, setFilesize] = useState<number>(0); // Filesize in bytes
   const [isFetching, setIsFetching] = useState<boolean>(false); // Indicates API fetch in progress
   const [isDownloading, setIsDownloading] = useState<boolean>(false); // Indicates download in progress
-  // Removed isPaused and progress states
+  const [selectedDirectoryUri, setSelectedDirectoryUri] = useState<string | null>(null); // Directory selected by user
+  const [defaultDirectory, setDefaultDirectory] = useState<string>(''); // Default app-specific directory
+
   const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null); // Reference to DownloadResumable instance
 
   // Helper function to ensure filename ends with .mp3
@@ -39,91 +34,85 @@ const Downloader = () => {
     return filename.toLowerCase().endsWith('.mp3') ? filename : `${filename}.mp3`;
   };
 
-  // Function to request storage permissions (required for Android if accessing external storage)
-  const requestPermissions = async () => {
-    if (Platform.OS === 'android') {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== PermissionStatus.GRANTED) {
-        Alert.alert(
-          'Permission Denied',
-          'Storage permission is required to download files.'
-        );
-        return false;
-      }
-    }
-    return true;
-  };
-
-  // Function to set default download directory and ensure it exists
-  const setDefaultDownloadDirectory = async () => {
+  // Function to set up the default directory
+  const setupDefaultDirectory = async () => {
     const dir = FileSystem.documentDirectory + 'MixTape/downloads/';
-
     try {
       const dirInfo = await FileSystem.getInfoAsync(dir);
       if (!dirInfo.exists) {
         await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
         console.log(`Created directory at ${dir}`);
       }
-      setDownloadDirectory(dir);
-      listFiles(dir);
+      setDefaultDirectory(dir);
     } catch (error) {
-      console.error('Error setting download directory:', error);
-      Alert.alert('Error', 'Failed to set up download directory.');
+      console.error('Error setting up default directory:', error);
+      Alert.alert('Error', 'Failed to set up default directory.');
     }
   };
 
-  // Function to list files in the download directory
-  const listFiles = async (dir: string) => {
-    try {
-      const filesInfo = await FileSystem.readDirectoryAsync(dir);
-      setFiles(filesInfo);
-    } catch (error) {
-      console.error('Error listing files:', error);
-      Alert.alert('Error', 'Failed to list downloaded files.');
+  // Function to request necessary permissions
+  const requestPermissions = async () => {
+    // Request Media Library permissions
+    const mediaLibraryPermission = await MediaLibrary.requestPermissionsAsync();
+    if (mediaLibraryPermission.status !== 'granted') {
+      Alert.alert(
+        'Permission Denied',
+        'Media library permission is required to save files.'
+      );
+      return false;
     }
+
+    // For Android, check if user has selected external directory
+    if (Platform.OS === 'android') {
+      const directoryUri = await AsyncStorage.getItem('selectedDirectoryUri');
+      if (directoryUri) {
+        setSelectedDirectoryUri(directoryUri);
+      }
+    }
+
+    return true;
   };
 
-  useEffect(() => {
-    setDefaultDownloadDirectory();
-    loadPausedDownload(); // Optional: Remove if not using paused downloads
-  }, []);
-
-  // Optional: Remove if not using paused downloads
-  const loadPausedDownload = async () => {
+  // Function to choose download directory
+  const chooseDirectory = async () => {
     try {
-      const downloadSnapshotJson = await AsyncStorage.getItem('pausedDownload');
-      if (downloadSnapshotJson) {
-        const downloadSnapshot = JSON.parse(downloadSnapshotJson);
-        const downloadResumable = new FileSystem.DownloadResumable(
-          downloadSnapshot.url,
-          downloadSnapshot.fileUri,
-          downloadSnapshot.options,
-          callback,
-          downloadSnapshot.resumeData
+      // SAF only works on Android
+      if (Platform.OS !== 'android') {
+        Alert.alert('Not Supported', 'Directory selection is only available on Android.');
+        return;
+      }
+
+      // Request permissions to access storage
+      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+      if (permissions.granted) {
+        // Save the URI of the selected directory
+        setSelectedDirectoryUri(permissions.directoryUri);
+        await AsyncStorage.setItem('selectedDirectoryUri', permissions.directoryUri);
+
+        Alert.alert(
+          'Directory Selected',
+          'You can now download files to the selected directory.'
         );
-        downloadResumableRef.current = downloadResumable;
-        // Removed isPaused and related state updates
-        setDownloadStatus('Download paused. You can resume it.');
+      } else {
+        Alert.alert('Permission Denied', 'You need to grant permission to access directories.');
       }
     } catch (error) {
-      console.error('Error loading paused download:', error);
+      console.error('Error choosing directory:', error);
+      Alert.alert('Error', 'An error occurred while selecting directory.');
     }
   };
 
-  // Callback to handle download progress
-  const callback = (downloadProgress: FileSystem.DownloadProgressCallbackData) => {
-    const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
-
-    let progressValue = 0;
-
-    if (totalBytesExpectedToWrite > 0) {
-      progressValue = totalBytesWritten / totalBytesExpectedToWrite;
-      // Clamp progress between 0 and 1
-      if (progressValue < 0) progressValue = 0;
-      if (progressValue > 1) progressValue = 1;
+  // Function to reset to default directory
+  const resetToDefaultDirectory = async () => {
+    try {
+      setSelectedDirectoryUri(null);
+      await AsyncStorage.removeItem('selectedDirectoryUri');
+      Alert.alert('Directory Reset', 'Download directory has been reset to default.');
+    } catch (error) {
+      console.error('Error resetting to default directory:', error);
+      Alert.alert('Error', 'An error occurred while resetting to default directory.');
     }
-
-    setDownloadStatus(`Downloading... ${Math.floor(progressValue * 100)}%`);
   };
 
   // Function to fetch download details from API
@@ -181,11 +170,6 @@ const Downloader = () => {
       return;
     }
 
-    if (!downloadDirectory) {
-      Alert.alert('Directory Not Set', 'Download directory is not set.');
-      return;
-    }
-
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
@@ -198,30 +182,13 @@ const Downloader = () => {
           ? ensureMp3Extension(userFileName.trim())
           : ensureMp3Extension('downloaded_file'); // Ensure .mp3 is appended
 
-      const fileUri = `${downloadDirectory}${finalFileName}`;
-
-      // Check if file already exists
-      const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      if (fileInfo.exists) {
-        Alert.alert(
-          'File Exists',
-          `A file named "${finalFileName}" already exists. Do you want to overwrite it?`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Overwrite',
-              style: 'destructive',
-              onPress: async () => {
-                await FileSystem.deleteAsync(fileUri);
-                performDownload(fileUri, finalFileName);
-              },
-            },
-          ]
-        );
-        return;
+      if (selectedDirectoryUri) {
+        // If user has selected a directory, use SAF to save the file there
+        performDownloadToExternalDirectory(finalFileName);
+      } else {
+        // Use default app-specific directory
+        performDownloadToDefaultDirectory(finalFileName);
       }
-
-      performDownload(fileUri, finalFileName);
     } catch (error) {
       console.error('Download error:', error);
       setDownloadStatus('Download failed.');
@@ -229,9 +196,15 @@ const Downloader = () => {
     }
   };
 
-  // Function to perform the actual download
-  const performDownload = async (fileUri: string, finalFileName: string) => {
+  // Function to perform the actual download to default directory
+  const performDownloadToDefaultDirectory = async (finalFileName: string) => {
     try {
+      setIsDownloading(true);
+      setDownloadStatus('Downloading...');
+
+      const fileUri = defaultDirectory + finalFileName;
+
+      // Download the file to the app-specific directory
       const downloadResumable = FileSystem.createDownloadResumable(
         fetchedLink,
         fileUri,
@@ -239,27 +212,123 @@ const Downloader = () => {
         callback
       );
 
-      downloadResumableRef.current = downloadResumable;
-      setIsDownloading(true);
-      setDownloadStatus('Downloading...');
-
       const downloadResult = await downloadResumable.downloadAsync();
-      const { uri } = downloadResult as DownloadResumableDownloadResult;
+      if (!downloadResult || !downloadResult.uri) {
+        throw new Error('Download failed or was canceled');
+      }
 
       setDownloadStatus('Download complete!');
-      Alert.alert('Success', `File downloaded to: ${uri}`);
+      Alert.alert('Success', `File saved to: ${downloadResult.uri}`);
       setIsDownloading(false);
-      // Removed progress reset since progress state is removed
-      AsyncStorage.removeItem('pausedDownload');
-      listFiles(downloadDirectory);
+
+      // Clear input fields and fetched data
+      setDownloadLink('');
+      setFetchedLink('');
+      setTitle('');
+      setFilesize(0);
+      setUserFileName('');
     } catch (error) {
       console.error('Download error:', error);
       setDownloadStatus('Download failed.');
       Alert.alert('Error', 'Failed to download the file.');
       setIsDownloading(false);
-      // Removed progress reset
     }
   };
+
+  // Function to perform the download to external directory using SAF
+  const performDownloadToExternalDirectory = async (finalFileName: string) => {
+    try {
+      setIsDownloading(true);
+      setDownloadStatus('Downloading...');
+
+      // Create a temporary file in cache directory
+      const tempFileUri = FileSystem.cacheDirectory + finalFileName;
+
+      // Download the file to the temp location
+      const downloadResumable = FileSystem.createDownloadResumable(
+        fetchedLink,
+        tempFileUri,
+        {},
+        callback
+      );
+
+      const downloadResult = await downloadResumable.downloadAsync();
+      if (!downloadResult || !downloadResult.uri) {
+        throw new Error('Download failed or was canceled');
+      }
+      const { uri } = downloadResult;
+
+      // Read the file content as a binary string
+      const fileString = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Create a file in the selected directory
+      try {
+        const newFileUri = await StorageAccessFramework.createFileAsync(
+          selectedDirectoryUri!,
+          finalFileName,
+          'audio/mpeg' // MIME type for MP3 files
+        );
+
+        // Write the file content to the new file
+        await StorageAccessFramework.writeAsStringAsync(newFileUri, fileString, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setDownloadStatus('Download complete!');
+        Alert.alert('Success', `File saved to the selected directory.`);
+
+        // Clear input fields and fetched data
+        setDownloadLink('');
+        setFetchedLink('');
+        setTitle('');
+        setFilesize(0);
+        setUserFileName('');
+      } catch (error) {
+        console.error('Error writing file:', error);
+        Alert.alert(
+          'Error',
+          'Failed to save the file to the selected directory. Please make sure the app has access to the directory and try again.'
+        );
+      }
+
+      setIsDownloading(false);
+
+      // Clean up: delete the temporary file from cache
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch (error) {
+      console.error('Download error:', error);
+      setDownloadStatus('Download failed.');
+      Alert.alert('Error', 'Failed to download the file.');
+      setIsDownloading(false);
+    }
+  };
+
+  // Callback to handle download progress
+  const callback = (downloadProgress: FileSystem.DownloadProgressData) => {
+    const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
+
+    let progressValue = 0;
+
+    if (totalBytesExpectedToWrite > 0) {
+      progressValue = totalBytesWritten / totalBytesExpectedToWrite;
+      // Clamp progress between 0 and 1
+      if (progressValue < 0) progressValue = 0;
+      if (progressValue > 1) progressValue = 1;
+    }
+
+    setDownloadStatus(`Downloading... ${Math.floor(progressValue * 100)}%`);
+  };
+
+  // Initialize default directory and request permissions on app start
+  useEffect(() => {
+    const init = async () => {
+      await setupDefaultDirectory();
+      await requestPermissions();
+    };
+    init();
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -280,6 +349,33 @@ const Downloader = () => {
           title={isFetching ? 'Fetching...' : 'Fetch Details'}
           onPress={fetchDownloadDetails}
           disabled={isFetching}
+        />
+      </View>
+
+      {/* Display Selected Directory */}
+      {selectedDirectoryUri ? (
+        <Text style={styles.status}>
+          Selected Directory: {selectedDirectoryUri}
+        </Text>
+      ) : (
+        <Text style={styles.status}>
+          Using Default Directory: {defaultDirectory}
+        </Text>
+      )}
+
+      {/* Option to Change Directory */}
+      <View style={styles.buttonContainer}>
+        <Button
+          title="Change Download Directory"
+          onPress={() => chooseDirectory()}
+        />
+      </View>
+
+      {/* Option to Reset to Default Directory */}
+      <View style={styles.buttonContainer}>
+        <Button
+          title="Reset to Default Directory"
+          onPress={resetToDefaultDirectory}
         />
       </View>
 
@@ -314,27 +410,6 @@ const Downloader = () => {
       {downloadStatus ? (
         <Text style={styles.status}>{downloadStatus}</Text>
       ) : null}
-
-      {/* Removed ProgressBar */}
-
-      {/* List of Downloaded Files */}
-      {files.length > 0 && (
-        <View style={styles.filesContainer}>
-          <Text style={styles.filesTitle}>Downloaded Files:</Text>
-          <FlatList
-            data={files}
-            keyExtractor={(item) => item}
-            renderItem={({ item }) => (
-              <DownloadItem
-                fileName={item}
-                directory={downloadDirectory}
-                refreshList={() => listFiles(downloadDirectory)}
-              />
-            )}
-            contentContainerStyle={styles.list}
-          />
-        </View>
-      )}
     </View>
   );
 };
@@ -367,17 +442,5 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
     color: 'green',
-  },
-  filesContainer: {
-    flex: 1,
-    marginTop: 20,
-  },
-  filesTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  list: {
-    paddingBottom: 20,
   },
 });
