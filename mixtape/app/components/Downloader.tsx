@@ -14,6 +14,8 @@ import * as MediaLibrary from 'expo-media-library';
 import { StorageAccessFramework } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiResponse } from '../types/types'; // Adjust the path as needed
+import { useRouter } from 'expo-router';
+
 
 const Downloader = () => {
   const [downloadLink, setDownloadLink] = useState<string>('');
@@ -28,6 +30,8 @@ const Downloader = () => {
   const [defaultDirectory, setDefaultDirectory] = useState<string>(''); // Default app-specific directory
 
   const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null); // Reference to DownloadResumable instance
+
+  const router = useRouter();
 
   // Helper function to ensure filename ends with .mp3
   const ensureMp3Extension = (filename: string): string => {
@@ -158,6 +162,10 @@ const Downloader = () => {
     } finally {
       setIsFetching(false);
     }
+  };
+
+  const goToDownloads = () => {
+    router.push('/Downloads');
   };
 
   // Function to handle the download process
@@ -410,6 +418,14 @@ const Downloader = () => {
       {downloadStatus ? (
         <Text style={styles.status}>{downloadStatus}</Text>
       ) : null}
+
+      {/* Go to Downloads Folder Button */}
+      <View style={styles.buttonContainer}>
+        <Button
+          title="Go to Downloads Folder"
+          onPress={goToDownloads}
+        />
+      </View>
     </View>
   );
 };

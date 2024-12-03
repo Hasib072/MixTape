@@ -11,9 +11,9 @@ const Home = () => {
     <View style={styles.container}>
       <Text style={styles.title}>Home</Text>
       <Downloader />
-      <View style={styles.downloadsButton}>
+      {/* <View style={styles.downloadsButton}>
         <Button title="Go to Downloads" onPress={() => router.push('/Downloads')} />
-      </View>
+      </View> */}
     </View>
   );
 };
