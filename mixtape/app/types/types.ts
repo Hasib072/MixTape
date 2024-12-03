@@ -16,3 +16,31 @@ export interface ApiResponse {
     msg: string;
   }
   
+  declare module 'expo-music-info-2' {
+    export interface MusicInfoOptions {
+      title?: boolean;
+      album?: boolean;
+      artist?: boolean;
+      genre?: boolean;
+      picture?: boolean;
+    }
+  
+    export interface PictureData {
+      description?: string;
+      pictureData: string; // data URI string
+    }
+  
+    export interface MusicMetadata {
+      title?: string;
+      album?: string;
+      artist?: string;
+      genre?: string;
+      picture?: PictureData;
+    }
+  
+    export function getMusicInfoAsync(
+      uri: string,
+      options?: MusicInfoOptions
+    ): Promise<MusicMetadata>;
+  }
+  
